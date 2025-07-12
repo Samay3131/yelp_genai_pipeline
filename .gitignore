@@ -5,3 +5,7 @@ __pycache__/
 .airflow/
 hdfs/
 models/
+*.tar
+*.json
+data/sample_input/*
+*.xml

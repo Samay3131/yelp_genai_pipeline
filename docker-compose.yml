@@ -1,1 +1,131 @@
-# Docker Compose for Airflow + HDFS + Hue
+version: '3.8'
+
+services:
+  # HDFS NameNode
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    ports:
+      - "9000:9000"   # HDFS RPC
+      - "9870:9870"   # HDFS Web UI
+    environment:
+      - CLUSTER_NAME=test-cluster
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    volumes:
+      - namenode:/hadoop/dfs/name
+    networks:
+      hadoop:
+        aliases:
+          - namenode
+
+  # HDFS DataNode
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    environment:
+      - CLUSTER_NAME=test-cluster
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    volumes:
+      - datanode:/hadoop/dfs/data
+    depends_on:
+      - namenode
+    networks:
+      - hadoop
+
+  # Spark Master
+  spark-master:
+    image: bitnami/spark:3.4
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    depends_on:
+      - namenode
+    networks:
+      - hadoop
+
+  # Spark Worker
+  spark-worker:
+    image: bitnami/spark:3.4
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    ports:
+      - "8081:8081"
+    depends_on:
+      - spark-master
+    networks:
+      - hadoop
+
+  # Hue Web UI for HDFS/Hive access
+  hue:
+    image: gethue/hue:latest
+    container_name: hue
+    ports:
+      - "8888:8888"
+    environment:
+      - HUE_IGNORE_PASSWORD_SCRIPT_ERRORS=True
+    depends_on:
+      - namenode
+    networks:
+      - hadoop
+
+  # Jupyter Notebook with PySpark
+  jupyter:
+    image: jupyter/pyspark-notebook
+    container_name: jupyter
+    ports:
+      - "8889:8888"
+    volumes:
+      - ./notebooks:/home/jovyan/work
+    depends_on:
+      - spark-master
+      - spark-worker
+    networks:
+      - hadoop
+
+  # PostgreSQL for Airflow metadata DB
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - hadoop
+
+  # Airflow (webserver + scheduler)
+  airflow:
+    image: puckel/docker-airflow:1.10.9
+    container_name: airflow
+    ports:
+      - "8082:8080"
+    environment:
+      - LOAD_EX=n
+      - EXECUTOR=Local
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+    volumes:
+      - ./dags:/usr/local/airflow/dags
+      - ./scripts:/usr/local/airflow/scripts
+    depends_on:
+      - postgres
+      - namenode
+      - spark-master
+    networks:
+      - hadoop
+
+volumes:
+  namenode:
+  datanode:
+  postgres_data:
+
+networks:
+  hadoop:
+    driver: bridge
